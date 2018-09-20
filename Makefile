@@ -1,4 +1,4 @@
-MODULE=rtsp2mjpeg
+MODULE=video2mjpeg
 
 .PHONY: build run image
 
