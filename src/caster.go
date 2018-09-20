@@ -153,6 +153,8 @@ func (c *Caster) Cast(command map[string]string, stopChan <-chan bool) (chan boo
 					return
 				}
 
+				log.Println("Read:", n)
+
 				indexes := []int{}
 				for i := 0; i < n-len(jpegSign); i++ {
 					if bytes.Compare(jpegSign, buf[i:i+len(jpegSign)]) == 0 {
