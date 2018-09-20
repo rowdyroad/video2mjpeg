@@ -120,8 +120,6 @@ func (c *Caster) Cast(command map[string]string, stopChan <-chan bool) (chan ima
 						stream.ImageChan <- image
 					}
 					currentSource.Unlock()
-				} else {
-					log.Println("Error image:", err)
 				}
 			}
 
