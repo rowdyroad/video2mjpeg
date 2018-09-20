@@ -3,6 +3,7 @@ package main
 import (
 	"flag"
 	"fmt"
+	"image/jpeg"
 	"log"
 	"math/rand"
 	"net/http"
@@ -30,7 +31,7 @@ func main() {
 		}
 		log.Println("Received http request. Command  is %v", command)
 		stopChan := make(chan bool)
-		headerChan, dataChan, doneChan, err := caster.Cast(command, stopChan)
+		imageChan, doneChan, err := caster.Cast(command, stopChan)
 		if err != nil {
 			w.WriteHeader(500)
 			return
@@ -47,12 +48,11 @@ func main() {
 			case <-doneChan:
 				log.Println("Close http connection")
 				return
-			case buf := <-dataChan:
-				w.Write(buf)
-			case <-headerChan:
+			case image := <-imageChan:
 				w.Write([]byte(fmt.Sprintf("\r\n--%v\r\n", boundary)))
 				w.Write([]byte("Content-type: image/jpeg\r\n"))
 				w.Write([]byte(fmt.Sprintf("Content-length: %d\r\n\r\n", 0)))
+				jpeg.Encode(w, image, nil)
 			}
 		}
 

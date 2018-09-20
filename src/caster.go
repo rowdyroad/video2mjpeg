@@ -1,10 +1,10 @@
 package main
 
 import (
-	"bytes"
 	"errors"
 	"fmt"
-	"io"
+	"image"
+	"image/jpeg"
 	"log"
 	"os/exec"
 	"strconv"
@@ -12,38 +12,25 @@ import (
 	"sync"
 )
 
-type stream struct {
-	HeaderChan chan bool
-	DataChan   chan []byte
-	DoneChan   chan bool
-}
-
 //NewCaster creates Caster instance
 func NewCaster() *Caster {
-	return &Caster{sync.Mutex{}, map[string]*[]stream{}}
+	return &Caster{sync.Map{}}
 }
 
 //Caster converting rtsp(or any) stream to mjpeg (with ffmjpeg support)
 type Caster struct {
-	sync.Mutex
-	streams map[string]*[]stream
+	sources sync.Map
 }
 
 func (c *Caster) Close() {
-	c.Lock()
-	defer c.Unlock()
-
-	for _, streams := range c.streams {
-		for _, stream := range *streams {
-			stream.DoneChan <- true
-		}
-	}
+	c.sources.Range(func(k, source interface{}) bool {
+		source.(*Source).Close(true)
+		return true
+	})
 }
 
 //Cast main functionality for convert rtsp(or any) to mjpeg
-func (c *Caster) Cast(command map[string]string, stopChan <-chan bool) (chan bool, chan []byte, chan bool, error) {
-	c.Lock()
-	defer c.Unlock()
+func (c *Caster) Cast(command map[string]string, stopChan <-chan bool) (chan image.Image, chan bool, error) {
 
 	id := ""
 	for name, value := range command {
@@ -52,7 +39,7 @@ func (c *Caster) Cast(command map[string]string, stopChan <-chan bool) (chan boo
 
 	source, has := command["source"]
 	if !has {
-		return nil, nil, nil, errors.New("source attribute is required")
+		return nil, nil, errors.New("source attribute is required")
 	}
 	fps, _ := strconv.ParseInt(command["fps"], 10, 64)
 	qscale, _ := strconv.ParseInt(command["qscale"], 10, 64)
@@ -60,46 +47,42 @@ func (c *Caster) Cast(command map[string]string, stopChan <-chan bool) (chan boo
 
 	log.Println("Casting for", id)
 
-	streams, exists := c.streams[id]
+	s, exists := c.sources.Load(id)
 	if !exists {
-		c.streams[id] = &[]stream{}
-		streams = c.streams[id]
+		s = &Source{sync.Mutex{}, []Stream{}, nil, false}
+		c.sources.Store(id, s)
 	}
-	current := stream{make(chan bool), make(chan []byte), make(chan bool)}
-	*streams = append(*streams, current)
-
-	stop := false
+	currentSource := s.(*Source)
+	current := Stream{make(chan image.Image), make(chan bool)}
+	currentSource.Streams = append(currentSource.Streams, current)
 
 	go func() {
 		<-stopChan
 		log.Println("Client gone")
-		c.Lock()
-		defer c.Unlock()
-		for index, cts := range *streams {
+		currentSource.Lock()
+		defer currentSource.Unlock()
+		for index, cts := range currentSource.Streams {
 			if cts == current {
 				log.Println("Removing client stream record.")
-				*streams = append((*streams)[:index], (*streams)[index+1:]...)
+				currentSource.Streams = append(currentSource.Streams[:index], currentSource.Streams[index+1:]...)
 				break
 			}
 		}
-		if len(*streams) == 0 {
+
+		log.Println("Streams:", len(currentSource.Streams))
+
+		if len(currentSource.Streams) == 0 {
 			log.Println("All clients gone. Stop casting.")
-			delete(c.streams, id)
-			stop = true
+			currentSource.Close(false)
+			c.sources.Delete(id)
+			log.Println("done allclient.")
 		}
 	}()
 
 	if !exists {
 		log.Println("No active stream for source. Creating.")
 		go func() {
-			defer func() {
-				log.Println("Done broadcasting")
-				c.Lock()
-				defer c.Unlock()
-				for _, cts := range *streams {
-					cts.DoneChan <- true
-				}
-			}()
+			defer currentSource.Close(true)
 
 			log.Println("Running ffmpeg for", id)
 
@@ -107,6 +90,7 @@ func (c *Caster) Cast(command map[string]string, stopChan <-chan bool) (chan boo
 			if fps > 0 {
 				execCommand += fmt.Sprintf(" -r %d ", fps)
 			}
+
 			if qscale > 0 {
 				execCommand += fmt.Sprintf(" -q:v %d ", qscale)
 			}
@@ -114,56 +98,38 @@ func (c *Caster) Cast(command map[string]string, stopChan <-chan bool) (chan boo
 			if len(scale) > 0 {
 				execCommand += fmt.Sprintf(" -vf 'scale=%s' ", strings.Replace(scale, "'", "\\'", -1))
 			}
+
 			log.Println("Exec command:", execCommand)
 			cmd := exec.Command("bash", "-c", execCommand+" - 2>/dev/null")
-			stdout, err := cmd.StdoutPipe()
-
+			var err error
+			currentSource.Pipe, err = cmd.StdoutPipe()
 			if err != nil {
 				log.Println("Error:", err)
 				return
 			}
+
 			if err := cmd.Start(); err != nil {
 				log.Println("Error:", err)
 				return
 			}
-			buf := make([]byte, 512*1024)
-			jpegSign := []byte{0xFF, 0xD8, 0xFF, 0xFE}
-			jpegSignLen := len(jpegSign)
 
-			flushData := func(start, end int) {
-				c.Lock()
-				defer c.Unlock()
-				for _, cts := range *streams {
-					cts.DataChan <- buf[start:end]
+			for !currentSource.Stop {
+				if image, err := jpeg.Decode(currentSource.Pipe); err == nil {
+					currentSource.Lock()
+					for _, stream := range currentSource.Streams {
+						stream.ImageChan <- image
+					}
+					currentSource.Unlock()
+				} else {
+					log.Println("Error image:", err)
 				}
 			}
 
-			flushHeader := func() {
-				c.Lock()
-				defer c.Unlock()
-				for _, cts := range *streams {
-					cts.HeaderChan <- true
-				}
-			}
-
-			for !stop {
-				n, err := stdout.Read(buf)
-				if n == 0 || (err != nil && err != io.EOF) {
-					log.Println("Error:", err)
-					return
-				}
-
-				log.Println("Read:", n)
-
-				if n >= jpegSignLen && bytes.Compare(jpegSign, buf[0:jpegSignLen]) == 0 {
-					flushHeader()
-					flushData(0, n)
-				}
-			}
+			log.Println("Stopped")
 		}()
 	} else {
 		log.Println("Source exists. Attaching.")
 	}
 
-	return current.HeaderChan, current.DataChan, current.DoneChan, nil
+	return current.ImageChan, current.DoneChan, nil
 }
