@@ -8,7 +8,7 @@ Instructions:
 $ sudo apt install fmpeg
 
 $ git clone https://github.com/rowdyroad/video2mjpeg.git
-$ cd rstp2mjpeg
+$ cd video2mjpeg
 $ go run src/*.go
 ```
 Open http://localhost/video?source=rtsp://184.72.239.149/vod/mp4:BigBuckBunny_175k.mov in your browser.
