@@ -11,7 +11,7 @@ $ git clone https://github.com/rowdyroad/video2mjpeg.git
 $ cd video2mjpeg
 $ go run src/*.go
 ```
-Open http://localhost/video?source=rtsp://184.72.239.149/vod/mp4:BigBuckBunny_175k.mov in your browser.
+Open http://localhost/?source=rtsp://184.72.239.149/vod/mp4:BigBuckBunny_175k.mov in your browser.
 
 ## Dockerizable using
 ```sh
@@ -19,7 +19,7 @@ $ make build
 $ make run
 ```
 
-Open http://localhost/video?source=rtsp://184.72.239.149/vod/mp4:BigBuckBunny_175k.mov in your browser.
+Open http://localhost/?source=rtsp://184.72.239.149/vod/mp4:BigBuckBunny_175k.mov in your browser.
 
 Start on different port:
 ```sh
@@ -32,4 +32,4 @@ $ make run listen=8000
  - qscale - quality of image (1-3) (read ffmpeg man)
  - scale - scale of image (640:480, 500:-1 & etc.) (read ffmpeg man "-vf scale")
 
-Example: http://localhost/video?source=rtsp://184.72.239.149/vod/mp4:BigBuckBunny_175k.mov&fps=1&qscale=3&scale=640:480
+Example: http://localhost/?source=rtsp://184.72.239.149/vod/mp4:BigBuckBunny_175k.mov&fps=1&qscale=3&scale=640:480
