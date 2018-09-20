@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
 	"io"
@@ -12,8 +13,9 @@ import (
 )
 
 type stream struct {
-	DataChan chan []byte
-	DoneChan chan bool
+	HeaderChan chan bool
+	DataChan   chan []byte
+	DoneChan   chan bool
 }
 
 //NewCaster creates Caster instance
@@ -39,7 +41,7 @@ func (c *Caster) Close() {
 }
 
 //Cast main functionality for convert rtsp(or any) to mjpeg
-func (c *Caster) Cast(command map[string]string, stopChan <-chan bool) (chan []byte, chan bool, error) {
+func (c *Caster) Cast(command map[string]string, stopChan <-chan bool) (chan bool, chan []byte, chan bool, error) {
 	c.Lock()
 	defer c.Unlock()
 
@@ -50,7 +52,7 @@ func (c *Caster) Cast(command map[string]string, stopChan <-chan bool) (chan []b
 
 	source, has := command["source"]
 	if !has {
-		return nil, nil, errors.New("source attribute is required")
+		return nil, nil, nil, errors.New("source attribute is required")
 	}
 	fps, _ := strconv.ParseInt(command["fps"], 10, 64)
 	qscale, _ := strconv.ParseInt(command["qscale"], 10, 64)
@@ -63,7 +65,7 @@ func (c *Caster) Cast(command map[string]string, stopChan <-chan bool) (chan []b
 		c.streams[id] = &[]stream{}
 		streams = c.streams[id]
 	}
-	current := stream{make(chan []byte), make(chan bool)}
+	current := stream{make(chan bool), make(chan []byte), make(chan bool)}
 	*streams = append(*streams, current)
 
 	stop := false
@@ -125,6 +127,24 @@ func (c *Caster) Cast(command map[string]string, stopChan <-chan bool) (chan []b
 				return
 			}
 			buf := make([]byte, 512*1024)
+			hasSign := false
+			jpegSign := []byte{0xFF, 0xD8, 0xFF, 0xFE}
+
+			flushData := func(start, end int) {
+				c.Lock()
+				defer c.Unlock()
+				for _, cts := range *streams {
+					cts.DataChan <- buf[start:end]
+				}
+			}
+
+			flushHeader := func() {
+				c.Lock()
+				defer c.Unlock()
+				for _, cts := range *streams {
+					cts.HeaderChan <- true
+				}
+			}
 
 			for !stop {
 				n, err := stdout.Read(buf)
@@ -133,16 +153,37 @@ func (c *Caster) Cast(command map[string]string, stopChan <-chan bool) (chan []b
 					return
 				}
 
-				c.Lock()
-				for _, cts := range *streams {
-					cts.DataChan <- buf[:n]
+				indexes := []int{}
+				for i := 0; i < n-len(jpegSign); i++ {
+					if bytes.Compare(jpegSign, buf[i:i+len(jpegSign)]) == 0 {
+						indexes = append(indexes, i)
+					}
 				}
-				c.Unlock()
+
+				if hasSign && len(indexes) == 0 {
+					flushData(0, n)
+				} else {
+					if hasSign && indexes[0] > 0 {
+						flushData(0, indexes[0])
+					}
+
+					for i := 0; i < len(indexes); i++ {
+						hasSign = true
+						flushHeader()
+
+						tail := n
+						if i < len(indexes)-1 {
+							tail = indexes[i+1]
+						}
+						flushData(indexes[i], tail)
+					}
+				}
+
 			}
 		}()
 	} else {
 		log.Println("Source exists. Attaching.")
 	}
 
-	return current.DataChan, current.DoneChan, nil
+	return current.HeaderChan, current.DataChan, current.DoneChan, nil
 }
