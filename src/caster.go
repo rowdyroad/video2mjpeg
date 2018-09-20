@@ -127,8 +127,8 @@ func (c *Caster) Cast(command map[string]string, stopChan <-chan bool) (chan boo
 				return
 			}
 			buf := make([]byte, 512*1024)
-			hasSign := false
 			jpegSign := []byte{0xFF, 0xD8, 0xFF, 0xFE}
+			jpegSignLen := len(jpegSign)
 
 			flushData := func(start, end int) {
 				c.Lock()
@@ -155,36 +155,10 @@ func (c *Caster) Cast(command map[string]string, stopChan <-chan bool) (chan boo
 
 				log.Println("Read:", n)
 
-				indexes := []int{}
-				for i := 0; i < n-len(jpegSign); i++ {
-					if bytes.Compare(jpegSign, buf[i:i+len(jpegSign)]) == 0 {
-						indexes = append(indexes, i)
-					}
-				}
-
-				if hasSign && len(indexes) == 0 {
-					log.Println("Flush full tail for previos:", 0, n)
+				if n >= jpegSignLen && bytes.Compare(jpegSign, buf[0:jpegSignLen]) == 0 {
+					flushHeader()
 					flushData(0, n)
-				} else {
-					if hasSign && indexes[0] > 0 {
-						log.Println("Flush first tail for previos: ", 0, indexes[0])
-						flushData(0, indexes[0])
-					}
-
-					for i := 0; i < len(indexes); i++ {
-						log.Println("Flush header", i)
-						hasSign = true
-						flushHeader()
-
-						tail := n
-						if i < len(indexes)-1 {
-							tail = indexes[i+1]
-						}
-						log.Println("Flush data:", indexes[i], tail)
-						flushData(indexes[i], tail)
-					}
 				}
-
 			}
 		}()
 	} else {
