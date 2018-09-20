@@ -1,9 +1,13 @@
 package main
 
 import (
+	"errors"
+	"fmt"
 	"io"
 	"log"
 	"os/exec"
+	"strconv"
+	"strings"
 	"sync"
 )
 
@@ -35,30 +39,34 @@ func (c *Caster) Close() {
 }
 
 //Cast main functionality for convert rtsp(or any) to mjpeg
-func (c *Caster) Cast(source string, stopChan <-chan bool) (chan []byte, chan bool) {
+func (c *Caster) Cast(command map[string]string, stopChan <-chan bool) (chan []byte, chan bool, error) {
 	c.Lock()
 	defer c.Unlock()
 
-	log.Println("Castring for", source)
+	id := ""
+	for name, value := range command {
+		id += name + "=" + value + ";"
+	}
 
-	streams, exists := c.streams[source]
+	source, has := command["source"]
+	if !has {
+		return nil, nil, errors.New("source attribute is required")
+	}
+	fps, _ := strconv.ParseInt(command["fps"], 10, 64)
+	qscale, _ := strconv.ParseInt(command["qscale"], 10, 64)
+	scale, _ := command["scale"]
+
+	log.Println("Casting for", id)
+
+	streams, exists := c.streams[id]
 	if !exists {
-		c.streams[source] = &[]stream{}
-		streams = c.streams[source]
+		c.streams[id] = &[]stream{}
+		streams = c.streams[id]
 	}
 	current := stream{make(chan []byte), make(chan bool)}
 	*streams = append(*streams, current)
 
 	stop := false
-
-	doneBroadcast := func() {
-		log.Println("Done broadcasting")
-		c.Lock()
-		defer c.Unlock()
-		for _, cts := range *streams {
-			cts.DoneChan <- true
-		}
-	}
 
 	go func() {
 		<-stopChan
@@ -74,7 +82,7 @@ func (c *Caster) Cast(source string, stopChan <-chan bool) (chan []byte, chan bo
 		}
 		if len(*streams) == 0 {
 			log.Println("All clients gone. Stop casting.")
-			delete(c.streams, source)
+			delete(c.streams, id)
 			stop = true
 		}
 	}()
@@ -82,17 +90,38 @@ func (c *Caster) Cast(source string, stopChan <-chan bool) (chan []byte, chan bo
 	if !exists {
 		log.Println("No active stream for source. Creating.")
 		go func() {
-			log.Println("Running ffmpeg for ", source)
-			cmd := exec.Command("bash", "-c", "ffmpeg -i "+source+" -c:v mjpeg  -q:v 3 -huffman optimal -f mjpeg - 2>/dev/null")
+			defer func() {
+				log.Println("Done broadcasting")
+				c.Lock()
+				defer c.Unlock()
+				for _, cts := range *streams {
+					cts.DoneChan <- true
+				}
+			}()
+
+			log.Println("Running ffmpeg for", id)
+
+			execCommand := "ffmpeg -i " + source + " -c:v mjpeg -f mjpeg"
+			if fps > 0 {
+				execCommand += fmt.Sprintf(" -r %d ", fps)
+			}
+			if qscale > 0 {
+				execCommand += fmt.Sprintf(" -q:v %d ", qscale)
+			}
+
+			if len(scale) > 0 {
+				execCommand += fmt.Sprintf(" -vf 'scale=%s' ", strings.Replace(scale, "'", "\\'", -1))
+			}
+			log.Println("Exec command:", execCommand)
+			cmd := exec.Command("bash", "-c", execCommand+" - 2>/dev/null")
 			stdout, err := cmd.StdoutPipe()
+
 			if err != nil {
 				log.Println("Error:", err)
-				doneBroadcast()
 				return
 			}
 			if err := cmd.Start(); err != nil {
 				log.Println("Error:", err)
-				doneBroadcast()
 				return
 			}
 			buf := make([]byte, 512*1024)
@@ -100,7 +129,6 @@ func (c *Caster) Cast(source string, stopChan <-chan bool) (chan []byte, chan bo
 			for !stop {
 				n, err := stdout.Read(buf)
 				if n == 0 || (err != nil && err != io.EOF) {
-					doneBroadcast()
 					log.Println("Error:", err)
 					return
 				}
@@ -111,11 +139,10 @@ func (c *Caster) Cast(source string, stopChan <-chan bool) (chan []byte, chan bo
 				}
 				c.Unlock()
 			}
-			doneBroadcast()
 		}()
 	} else {
 		log.Println("Source exists. Attaching.")
 	}
 
-	return current.DataChan, current.DoneChan
+	return current.DataChan, current.DoneChan, nil
 }
