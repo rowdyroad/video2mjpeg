@@ -161,13 +161,16 @@ func (c *Caster) Cast(command map[string]string, stopChan <-chan bool) (chan boo
 				}
 
 				if hasSign && len(indexes) == 0 {
+					log.Println("Flush full tail for previos:", 0, n)
 					flushData(0, n)
 				} else {
 					if hasSign && indexes[0] > 0 {
+						log.Println("Flush first tail for previos: ", 0, indexes[0])
 						flushData(0, indexes[0])
 					}
 
 					for i := 0; i < len(indexes); i++ {
+						log.Println("Flush header", i)
 						hasSign = true
 						flushHeader()
 
@@ -175,6 +178,7 @@ func (c *Caster) Cast(command map[string]string, stopChan <-chan bool) (chan boo
 						if i < len(indexes)-1 {
 							tail = indexes[i+1]
 						}
+						log.Println("Flush data:", indexes[i], tail)
 						flushData(indexes[i], tail)
 					}
 				}
