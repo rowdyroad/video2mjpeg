@@ -1,5 +1,5 @@
-# rtsp2mjpeg
-Module to casting mjpeg stream over http from rtsp (or any) video source
+# video2mjpeg
+Module to casting mjpeg stream over http from any video source
 
 
 ## Direct using
@@ -7,7 +7,7 @@ Instructions:
 ```sh
 $ sudo apt install fmpeg
 
-$ git clone https://github.com/rowdyroad/rtsp2mjpeg.git
+$ git clone https://github.com/rowdyroad/video2mjpeg.git
 $ cd rstp2mjpeg
 $ go run src/*.go
 ```
