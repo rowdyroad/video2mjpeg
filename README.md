@@ -27,7 +27,7 @@ $ make run listen=8000
 ```
 
 ## URL attributes
- - source - url for vidoe stream (like in an example)
+ - source - url for video stream (like in an example)
  - fps - frames per second
  - qscale - quality of image (1-3) (read ffmpeg man)
  - scale - scale of image (640:480, 500:-1 & etc.) (read ffmpeg man "-vf scale")
