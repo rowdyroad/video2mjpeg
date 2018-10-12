@@ -11,6 +11,7 @@ build: image
 		--rm \
 		-v $(PWD)/src:/opt/src \
 		-v $(PWD)/bin:/opt/bin \
+		-v $(PWD)/pkg:/opt/go \
 		-e "GOPATH=/opt/go" \
 		$(MODULE) \
 		bash -c "cd /opt/src && go get -d -v && go build -i -o /opt/bin/$(MODULE) *.go"

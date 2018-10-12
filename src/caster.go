@@ -1,7 +1,6 @@
 package main
 
 import (
-	"errors"
 	"fmt"
 	"image"
 	"image/jpeg"
@@ -15,121 +14,143 @@ import (
 
 //NewCaster creates Caster instance
 func NewCaster() *Caster {
-	return &Caster{sync.Map{}}
+	return &Caster{
+		sources: map[string]*Source{},
+	}
 }
 
 //Caster converting rtsp(or any) stream to mjpeg (with ffmjpeg support)
 type Caster struct {
-	sources sync.Map
+	sync.Mutex
+	sources map[string]*Source
 }
 
+//Close all sourcess
 func (c *Caster) Close() {
-	c.sources.Range(func(k, source interface{}) bool {
-		source.(*Source).Close(true)
-		return true
-	})
+	c.Lock()
+	defer c.Unlock()
+	for _, source := range c.sources {
+		source.Close(true)
+	}
 }
 
 //Cast main functionality for convert rtsp(or any) to mjpeg
 func (c *Caster) Cast(command map[string]string, stopChan <-chan bool) (chan image.Image, chan bool, error) {
-
+	c.Lock()
+	defer c.Unlock()
 	id := ""
 	for name, value := range command {
 		id += name + "=" + value + ";"
 	}
 
-	source, has := command["source"]
+	log.Debug("Casting for", id)
+	var exists bool
+	var source *Source
+	source, exists = c.sources[id]
+	if !exists {
+		source = &Source{sync.Mutex{}, []*Stream{}, nil, false}
+		c.sources[id] = source
+	}
+
+	stream := &Stream{make(chan image.Image), make(chan bool)}
+	source.Lock()
+	source.Streams = append(source.Streams, stream)
+	source.Unlock()
+
+	go c.waitForClientGone(source, stream, stopChan)
+
+	if !exists {
+		go c.broadcastSource(id, command, source)
+	} else {
+		log.Debug("Source exists. Attaching.")
+	}
+
+	return stream.ImageChan, stream.DoneChan, nil
+}
+
+func (c *Caster) waitForClientGone(source *Source, stream *Stream, stopChan <-chan bool) {
+	<-stopChan
+	log.Debug("Client gone")
+
+	source.Lock()
+	for index, cts := range source.Streams {
+		if cts == stream {
+			log.Debug("Removing client stream record.")
+			source.Streams = append(source.Streams[:index], source.Streams[index+1:]...)
+			break
+		}
+	}
+	source.Unlock()
+	log.Debug("Streams:", len(source.Streams))
+
+	if len(source.Streams) == 0 {
+		log.Debug("All clients gone. Source closing.")
+		source.Close(false)
+
+		c.Lock()
+		for id, s := range c.sources {
+			if s == source {
+				log.Debug("Source closed. Deleting source", id)
+				delete(c.sources, id)
+				break
+			}
+		}
+		c.Unlock()
+		log.Debug("done allclient.")
+	}
+}
+
+func (c *Caster) broadcastSource(id string, command map[string]string, source *Source) {
+	log.Debug("No active stream for source. Creating.")
+	defer source.Close(true)
+
+	commandSource, has := command["source"]
 	if !has {
-		return nil, nil, errors.New("source attribute is required")
+		log.Error("Source attribute is required")
+		return
 	}
 	fps, _ := strconv.ParseInt(command["fps"], 10, 64)
 	qscale, _ := strconv.ParseInt(command["qscale"], 10, 64)
 	scale, _ := command["scale"]
 
-	log.Debug("Casting for", id)
+	log.Debug("Running ffmpeg for", id)
 
-	s, exists := c.sources.Load(id)
-	if !exists {
-		s = &Source{sync.Mutex{}, []Stream{}, nil, false}
-		c.sources.Store(id, s)
-	}
-	currentSource := s.(*Source)
-	current := Stream{make(chan image.Image), make(chan bool)}
-	currentSource.Streams = append(currentSource.Streams, current)
-
-	go func() {
-		<-stopChan
-		log.Debug("Client gone")
-		currentSource.Lock()
-		defer currentSource.Unlock()
-		for index, cts := range currentSource.Streams {
-			if cts == current {
-				log.Debug("Removing client stream record.")
-				currentSource.Streams = append(currentSource.Streams[:index], currentSource.Streams[index+1:]...)
-				break
-			}
-		}
-
-		log.Debug("Streams:", len(currentSource.Streams))
-
-		if len(currentSource.Streams) == 0 {
-			log.Debug("All clients gone. Source closing.")
-			currentSource.Close(false)
-			log.Debug("Source closed. Deleting source", id)
-			c.sources.Delete(id)
-			log.Debug("done allclient.")
-		}
-	}()
-
-	if !exists {
-		log.Debug("No active stream for source. Creating.")
-		go func() {
-			defer currentSource.Close(true)
-
-			log.Debug("Running ffmpeg for", id)
-
-			execCommand := "ffmpeg -i " + source + " -c:v mjpeg -f mjpeg"
-			if fps > 0 {
-				execCommand += fmt.Sprintf(" -r %d ", fps)
-			}
-
-			if qscale > 0 {
-				execCommand += fmt.Sprintf(" -q:v %d ", qscale)
-			}
-
-			if len(scale) > 0 {
-				execCommand += fmt.Sprintf(" -vf 'scale=%s' ", strings.Replace(scale, "'", "\\'", -1))
-			}
-
-			log.Debug("Exec command:", execCommand)
-			cmd := exec.Command("bash", "-c", execCommand+" - 2>/dev/null")
-			var err error
-			currentSource.Pipe, err = cmd.StdoutPipe()
-			if err != nil {
-				log.Error("Error:", err)
-				return
-			}
-
-			if err := cmd.Start(); err != nil {
-				log.Error("Error:", err)
-				return
-			}
-
-			for !currentSource.Stop {
-				if image, err := jpeg.Decode(currentSource.Pipe); err == nil {
-					currentSource.Lock()
-					for _, stream := range currentSource.Streams {
-						stream.ImageChan <- image
-					}
-					currentSource.Unlock()
-				}
-			}
-
-			log.Debug("Stopped")
-		}()
-	} else {
-		log.Debug("Source exists. Attaching.")
+	execCommand := "ffmpeg -i " + commandSource + " -c:v mjpeg -f mjpeg"
+	if fps > 0 {
+		execCommand += fmt.Sprintf(" -r %d ", fps)
 	}
 
-	return current.ImageChan, current.DoneChan, nil
+	if qscale > 0 {
+		execCommand += fmt.Sprintf(" -q:v %d ", qscale)
+	}
+
+	if len(scale) > 0 {
+		execCommand += fmt.Sprintf(" -vf 'scale=%s' ", strings.Replace(scale, "'", "\\'", -1))
+	}
+
+	log.Debug("Exec command:", execCommand)
+	cmd := exec.Command("bash", "-c", execCommand+" - 2>/dev/null")
+	var err error
+	source.Pipe, err = cmd.StdoutPipe()
+	if err != nil {
+		log.Error("Error:", err)
+		return
+	}
+
+	if err := cmd.Start(); err != nil {
+		log.Error("Error:", err)
+		return
+	}
+
+	for !source.Stop {
+		if image, err := jpeg.Decode(source.Pipe); err == nil {
+			source.Lock()
+			for _, stream := range source.Streams {
+				stream.ImageChan <- image
+			}
+			source.Unlock()
+		}
+	}
+
+	log.Debug("Stopped")
 }
