@@ -5,11 +5,12 @@ import (
 	"fmt"
 	"image"
 	"image/jpeg"
-	"log"
 	"os/exec"
 	"strconv"
 	"strings"
 	"sync"
+
+	log "github.com/rowdyroad/go-simple-logger"
 )
 
 //NewCaster creates Caster instance
@@ -45,7 +46,7 @@ func (c *Caster) Cast(command map[string]string, stopChan <-chan bool) (chan ima
 	qscale, _ := strconv.ParseInt(command["qscale"], 10, 64)
 	scale, _ := command["scale"]
 
-	log.Println("Casting for", id)
+	log.Debug("Casting for", id)
 
 	s, exists := c.sources.Load(id)
 	if !exists {
@@ -58,33 +59,34 @@ func (c *Caster) Cast(command map[string]string, stopChan <-chan bool) (chan ima
 
 	go func() {
 		<-stopChan
-		log.Println("Client gone")
+		log.Debug("Client gone")
 		currentSource.Lock()
 		defer currentSource.Unlock()
 		for index, cts := range currentSource.Streams {
 			if cts == current {
-				log.Println("Removing client stream record.")
+				log.Debug("Removing client stream record.")
 				currentSource.Streams = append(currentSource.Streams[:index], currentSource.Streams[index+1:]...)
 				break
 			}
 		}
 
-		log.Println("Streams:", len(currentSource.Streams))
+		log.Debug("Streams:", len(currentSource.Streams))
 
 		if len(currentSource.Streams) == 0 {
-			log.Println("All clients gone. Stop casting.")
+			log.Debug("All clients gone. Source closing.")
 			currentSource.Close(false)
+			log.Debug("Source closed. Deleting source", id)
 			c.sources.Delete(id)
-			log.Println("done allclient.")
+			log.Debug("done allclient.")
 		}
 	}()
 
 	if !exists {
-		log.Println("No active stream for source. Creating.")
+		log.Debug("No active stream for source. Creating.")
 		go func() {
 			defer currentSource.Close(true)
 
-			log.Println("Running ffmpeg for", id)
+			log.Debug("Running ffmpeg for", id)
 
 			execCommand := "ffmpeg -i " + source + " -c:v mjpeg -f mjpeg"
 			if fps > 0 {
@@ -99,17 +101,17 @@ func (c *Caster) Cast(command map[string]string, stopChan <-chan bool) (chan ima
 				execCommand += fmt.Sprintf(" -vf 'scale=%s' ", strings.Replace(scale, "'", "\\'", -1))
 			}
 
-			log.Println("Exec command:", execCommand)
+			log.Debug("Exec command:", execCommand)
 			cmd := exec.Command("bash", "-c", execCommand+" - 2>/dev/null")
 			var err error
 			currentSource.Pipe, err = cmd.StdoutPipe()
 			if err != nil {
-				log.Println("Error:", err)
+				log.Error("Error:", err)
 				return
 			}
 
 			if err := cmd.Start(); err != nil {
-				log.Println("Error:", err)
+				log.Error("Error:", err)
 				return
 			}
 
@@ -123,10 +125,10 @@ func (c *Caster) Cast(command map[string]string, stopChan <-chan bool) (chan ima
 				}
 			}
 
-			log.Println("Stopped")
+			log.Debug("Stopped")
 		}()
 	} else {
-		log.Println("Source exists. Attaching.")
+		log.Debug("Source exists. Attaching.")
 	}
 
 	return current.ImageChan, current.DoneChan, nil

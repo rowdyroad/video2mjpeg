@@ -4,13 +4,14 @@ import (
 	"flag"
 	"fmt"
 	"image/jpeg"
-	"log"
 	"math/rand"
 	"net/http"
+
+	log "github.com/rowdyroad/go-simple-logger"
 )
 
 func main() {
-	log.SetFlags(log.Ldate | log.Ltime | log.Lshortfile)
+	log.SetFlags(log.Ldate | log.Ltime | log.Lshortfile | log.Lshortlevel | log.Lcolor)
 	var listen string
 	flag.StringVar(&listen, "listen", ":80", "Listen address and port")
 	flag.Parse()
@@ -29,10 +30,11 @@ func main() {
 			w.WriteHeader(500)
 			return
 		}
-		log.Println("Received http request. Command  is %v", command)
+		log.Debugf("Received http request. Command  is %v", command)
 		stopChan := make(chan bool)
 		imageChan, doneChan, err := caster.Cast(command, stopChan)
 		if err != nil {
+			log.Error("Cast create error:", err)
 			w.WriteHeader(500)
 			return
 		}
@@ -44,9 +46,10 @@ func main() {
 		for {
 			select {
 			case <-w.(http.CloseNotifier).CloseNotify():
+				log.Debug("HTTP close event")
 				return
 			case <-doneChan:
-				log.Println("Close http connection")
+				log.Debug("Close http connection")
 				return
 			case image := <-imageChan:
 				w.Write([]byte(fmt.Sprintf("\r\n--%v\r\n", boundary)))

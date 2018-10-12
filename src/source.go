@@ -3,6 +3,8 @@ package main
 import (
 	"io"
 	"sync"
+
+	log "github.com/rowdyroad/go-simple-logger"
 )
 
 type Source struct {
@@ -13,13 +15,18 @@ type Source struct {
 }
 
 func (s *Source) Close(broadcast bool) {
+	log.Debug("Closing source / broadcasted:", broadcast)
 	s.Lock()
 	defer s.Unlock()
 	s.Stop = true
 	s.Pipe.Close()
+	log.Debug("Pipe is closed")
 	if broadcast {
-		for _, stream := range s.Streams {
+		log.Debug("Broadcasting...")
+		for index, stream := range s.Streams {
+			log.Debug("Closing stream", index)
 			stream.DoneChan <- true
+			log.Debug("Stream", index, "closed")
 		}
 	}
 }
