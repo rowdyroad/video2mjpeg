@@ -30,7 +30,7 @@ func (c *Caster) Close() {
 	c.Lock()
 	defer c.Unlock()
 	for _, source := range c.sources {
-		source.Close(true)
+		source.Close()
 	}
 }
 
@@ -80,13 +80,15 @@ func (c *Caster) waitForClientGone(source *Source, stream *Stream, stopChan <-ch
 			break
 		}
 	}
-	source.Unlock()
-	log.Debug("Streams:", len(source.Streams))
-
 	if len(source.Streams) == 0 {
 		log.Debug("All clients gone. Source closing.")
-		source.Close(false)
+		source.Close()
+	}
+	source.Unlock()
 
+	log.Debug("Source is stopped:", source.Stop)
+	if source.Stop {
+		log.Debug("Remove stopped source from sources list")
 		c.Lock()
 		for id, s := range c.sources {
 			if s == source {
@@ -102,7 +104,7 @@ func (c *Caster) waitForClientGone(source *Source, stream *Stream, stopChan <-ch
 
 func (c *Caster) broadcastSource(id string, command map[string]string, source *Source) {
 	log.Debug("No active stream for source. Creating.")
-	defer source.Close(true)
+	defer source.Close()
 
 	commandSource, has := command["source"]
 	if !has {
