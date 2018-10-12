@@ -58,6 +58,7 @@ func main() {
 				jpeg.Encode(w, image, nil)
 			}
 		}
+		close(stopChan)
 
 	})
 

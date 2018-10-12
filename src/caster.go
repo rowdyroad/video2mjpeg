@@ -72,7 +72,10 @@ func (c *Caster) waitForClientGone(source *Source, stream *Stream, stopChan <-ch
 	<-stopChan
 	log.Debug("Client gone")
 
+	<-stream.ImageChan
+
 	source.Lock()
+	log.Debug("Find and remove stream from source");
 	for index, cts := range source.Streams {
 		if cts == stream {
 			log.Debug("Removing client stream record.")
