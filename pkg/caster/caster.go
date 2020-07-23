@@ -1,11 +1,11 @@
-package main
+package caster
 
 import (
 	"fmt"
 	"image"
 	"image/jpeg"
+	"os"
 	"os/exec"
-	"strconv"
 	"strings"
 	"sync"
 
@@ -35,12 +35,19 @@ func (c *Caster) Close() {
 }
 
 //Cast main functionality for convert rtsp(or any) to mjpeg
-func (c *Caster) Cast(command map[string]string, stopChan <-chan bool) (chan image.Image, chan bool, error) {
+func (c *Caster) Cast(input string, fps *int64, qscale *int64, scale *string, stopChan <-chan bool) (chan image.Image, chan bool, error) {
 	c.Lock()
 	defer c.Unlock()
-	id := ""
-	for name, value := range command {
-		id += name + "=" + value + ";"
+
+	id := input
+	if fps != nil {
+		id +=fmt.Sprintf("fps=%d", *fps)
+	}
+	if qscale != nil {
+		id +=fmt.Sprintf("qscale=%d", *qscale)
+	}
+	if scale != nil {
+		id +=fmt.Sprintf("scale=%s", *scale)
 	}
 
 	log.Debug("Casting for", id)
@@ -60,7 +67,7 @@ func (c *Caster) Cast(command map[string]string, stopChan <-chan bool) (chan ima
 	go c.waitForClientGone(source, stream, stopChan)
 
 	if !exists {
-		go c.broadcastSource(id, command, source)
+		go c.broadcastSource(id, input , fps, qscale, scale , source)
 	} else {
 		log.Debug("Source exists. Attaching.")
 	}
@@ -105,38 +112,32 @@ func (c *Caster) waitForClientGone(source *Source, stream *Stream, stopChan <-ch
 	}
 }
 
-func (c *Caster) broadcastSource(id string, command map[string]string, source *Source) {
+func (c *Caster) broadcastSource(id string, input string, fps *int64, qscale *int64, scale *string, source *Source) {
 	log.Debug("No active stream for source. Creating.")
 	defer source.Close()
 
-	commandSource, has := command["source"]
-	if !has {
-		log.Error("Source attribute is required")
-		return
-	}
-	fps, _ := strconv.ParseInt(command["fps"], 10, 64)
-	qscale, _ := strconv.ParseInt(command["qscale"], 10, 64)
-	scale, _ := command["scale"]
-
 	log.Debug("Running ffmpeg for", id)
 
-	execCommand := "ffmpeg -i " + commandSource + " -c:v mjpeg -f mjpeg"
-	if fps > 0 {
-		execCommand += fmt.Sprintf(" -r %d ", fps)
+	input = strings.ReplaceAll(input,"\"", "\\\"", )
+
+	execCommand := "ffmpeg -i \"" + input + "\" -c:v mjpeg -f mjpeg"
+	if fps !=nil {
+		execCommand += fmt.Sprintf(" -r %d ", *fps)
 	}
 
-	if qscale > 0 {
-		execCommand += fmt.Sprintf(" -q:v %d ", qscale)
+	if qscale != nil {
+		execCommand += fmt.Sprintf(" -q:v %d ", *qscale)
 	}
 
-	if len(scale) > 0 {
-		execCommand += fmt.Sprintf(" -vf 'scale=%s' ", strings.Replace(scale, "'", "\\'", -1))
+	if scale != nil {
+		execCommand += fmt.Sprintf(" -vf 'scale=%s' ", strings.ReplaceAll(strings.ReplaceAll(*scale, "'", "\\'", ), "\"", "\\\"", ))
 	}
 
 	log.Debug("Exec command:", execCommand)
-	cmd := exec.Command("bash", "-c", execCommand+" - 2>/dev/null")
+	cmd := exec.Command("bash", "-c", execCommand+" -")
 	var err error
 	source.Pipe, err = cmd.StdoutPipe()
+	cmd.Stderr = os.Stderr
 	if err != nil {
 		log.Error("Error:", err)
 		return
