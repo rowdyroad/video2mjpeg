@@ -62,8 +62,7 @@ func NewApp(config Config) *App {
 				return
 			case image := <-imageChan:
 				c.Writer.Write([]byte(fmt.Sprintf("\r\n--%v\r\n", boundary)))
-				c.Writer.Write([]byte("Content-type: image/jpeg\r\n"))
-				c.Writer.Write([]byte(fmt.Sprintf("Content-length: %d\r\n\r\n", 0)))
+				c.Writer.Write([]byte("Content-type: image/jpeg\r\n\r\n"))
 				jpeg.Encode(c.Writer, image, nil)
 			}
 		}
