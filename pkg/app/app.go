@@ -8,7 +8,7 @@ import (
 	"image/jpeg"
 	"math/rand"
 	"net/http"
-	"video2mjpeg/pkg/caster"
+	"github.com/rowdyroad/video2mjpeg/pkg/caster"
 
 	log "github.com/rowdyroad/go-simple-logger"
 )

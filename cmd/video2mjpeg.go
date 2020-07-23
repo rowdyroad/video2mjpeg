@@ -2,7 +2,7 @@ package main
 
 import (
 	yconfig "github.com/rowdyroad/go-yaml-config"
-	"video2mjpeg/pkg/app"
+	"github.com/rowdyroad/video2mjpeg/pkg/app"
 )
 
 func main() {

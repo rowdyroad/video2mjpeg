@@ -1,4 +1,4 @@
-module video2mjpeg
+module github.com/rowdyroad/video2mjpeg
 
 go 1.14
 
